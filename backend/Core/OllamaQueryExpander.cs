@@ -41,9 +41,9 @@ public sealed class OllamaQueryExpander : IDisposable
             timeout.CancelAfter(TimeSpan.FromSeconds(15));
 
             var prompt =
-                "Extract 3 to 5 relevant English keywords and synonyms for this search query. " +
-                "Return only a comma-separated list of lowercase single words. " +
-                "Do not repeat words or add explanations. Query: " + query;
+                "List 4 single-word English synonyms or related search terms for: \"" +
+                query +
+                "\". Output ONLY the 4 words separated by commas, no intro text, no numbers, no explanations.";
 
             var payload = new
             {
@@ -171,6 +171,10 @@ public sealed class OllamaQueryExpander : IDisposable
                 var normalized = Normalize(responseTerms[i]);
                 if (normalized.Length == 0)
                     continue;
+                if (int.TryParse(normalized, out _))
+                    continue;
+                if (IsPromptEchoStopWord(normalized))
+                    continue;
 
                 var duplicate = false;
                 for (var j = 0; j < termCount; j++)
@@ -207,5 +211,25 @@ public sealed class OllamaQueryExpander : IDisposable
         }
 
         return length == 0 ? string.Empty : new string(characters, 0, length);
+    }
+
+    private static bool IsPromptEchoStopWord(string word)
+    {
+        return word == "here" ||
+               word == "are" ||
+               word == "is" ||
+               word == "the" ||
+               word == "and" ||
+               word == "for" ||
+               word == "with" ||
+               word == "relevant" ||
+               word == "english" ||
+               word == "keywords" ||
+               word == "synonyms" ||
+               word == "words" ||
+               word == "search" ||
+               word == "query" ||
+               word == "list" ||
+               word == "terms";
     }
 }
