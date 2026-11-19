@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Net.WebSockets;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Backend.Core;
@@ -23,6 +24,8 @@ builder.Services.AddSingleton<OllamaQueryExpander>(provider =>
 });
 
 var app = builder.Build();
+
+app.UseWebSockets();
 
 app.MapGet("/api/health", async (IHttpClientFactory httpClientFactory) =>
 {
@@ -133,6 +136,125 @@ app.MapGet("/api/stats", (IndexingState indexingState) =>
     });
 });
 
+app.Map("/ws/search", async (
+    HttpContext httpContext,
+    ThreadSafeInvertedIndex index,
+    OllamaQueryExpander expander) =>
+{
+    if (!httpContext.WebSockets.IsWebSocketRequest)
+    {
+        httpContext.Response.StatusCode = StatusCodes.Status400BadRequest;
+        return;
+    }
+
+    var webSocket = await httpContext.WebSockets.AcceptWebSocketAsync();
+
+    try
+    {
+        using var message = new MemoryStream();
+        var buffer = new byte[4096];
+
+        WebSocketReceiveResult receiveResult;
+        do
+        {
+            receiveResult = await webSocket.ReceiveAsync(
+                new ArraySegment<byte>(buffer),
+                httpContext.RequestAborted);
+
+            if (receiveResult.MessageType == WebSocketMessageType.Close)
+            {
+                await webSocket.CloseAsync(
+                    WebSocketCloseStatus.NormalClosure,
+                    "Closing",
+                    httpContext.RequestAborted);
+                return;
+            }
+
+            await message.WriteAsync(
+                buffer.AsMemory(0, receiveResult.Count),
+                httpContext.RequestAborted);
+        }
+        while (!receiveResult.EndOfMessage);
+
+        var request = JsonSerializer.Deserialize<SearchRequest>(
+            message.ToArray(),
+            new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true
+            });
+
+        var query = request?.Query?.Trim() ?? string.Empty;
+        var expandedTerms = query.Length == 0
+            ? Array.Empty<string>()
+            : await expander.ExpandAsync(query);
+
+        await SendJsonAsync(webSocket, new
+        {
+            stage = "query_expansion",
+            data = new
+            {
+                original = query,
+                expanded_terms = expandedTerms
+            }
+        }, httpContext.RequestAborted);
+
+        var stopwatch = Stopwatch.StartNew();
+        var matches = index.SearchAny(expandedTerms, 20);
+        stopwatch.Stop();
+
+        var maxScore = 0;
+        for (var i = 0; i < matches.Length; i++)
+        {
+            if (matches[i].Score > maxScore)
+                maxScore = matches[i].Score;
+        }
+
+        var results = new SearchApiResult[matches.Length];
+        for (var i = 0; i < matches.Length; i++)
+        {
+            var normalizedScore = maxScore == 0
+                ? 0.0
+                : Math.Round((double)matches[i].Score / maxScore, 4);
+
+            results[i] = new SearchApiResult(
+                matches[i].DocId,
+                normalizedScore,
+                matches[i].Snippet);
+        }
+
+        await SendJsonAsync(webSocket, new
+        {
+            stage = "keyword_search",
+            data = new
+            {
+                results,
+                time_ms = stopwatch.ElapsedMilliseconds
+            }
+        }, httpContext.RequestAborted);
+
+        await SendJsonAsync(webSocket, new
+        {
+            stage = "done"
+        }, httpContext.RequestAborted);
+
+        await webSocket.CloseAsync(
+            WebSocketCloseStatus.NormalClosure,
+            "Search completed",
+            httpContext.RequestAborted);
+    }
+    catch (WebSocketException)
+    {
+        if (webSocket.State == WebSocketState.Open ||
+            webSocket.State == WebSocketState.CloseReceived)
+        {
+            await webSocket.CloseAsync(
+                WebSocketCloseStatus.InternalServerError,
+                "WebSocket error",
+                CancellationToken.None);
+        }
+    }
+});
+
 app.MapPost("/api/search", async (
     HttpContext httpContext,
     ThreadSafeInvertedIndex index,
@@ -200,6 +322,19 @@ app.MapPost("/api/search", async (
         time_ms = stopwatch.ElapsedMilliseconds
     });
 });
+
+static async Task SendJsonAsync(
+    WebSocket webSocket,
+    object message,
+    CancellationToken cancellationToken)
+{
+    var bytes = JsonSerializer.SerializeToUtf8Bytes(message);
+    await webSocket.SendAsync(
+        new ArraySegment<byte>(bytes),
+        WebSocketMessageType.Text,
+        true,
+        cancellationToken);
+}
 
 app.Run();
 
