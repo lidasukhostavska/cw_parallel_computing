@@ -234,6 +234,117 @@ public sealed class ThreadSafeInvertedIndex
         return BuildResults(matches);
     }
 
+    public SearchResult[] SearchAny(string[] terms, int topK = 20)
+    {
+        ArgumentNullException.ThrowIfNull(terms);
+
+        if (topK <= 0 || terms.Length == 0)
+            return Array.Empty<SearchResult>();
+
+        var uniqueTerms = new string[terms.Length];
+        var uniqueTermCount = 0;
+
+        for (var i = 0; i < terms.Length; i++)
+        {
+            if (terms[i] == null)
+                continue;
+
+            var normalized = Normalize(terms[i]);
+            if (normalized.Length == 0)
+                continue;
+
+            var alreadyAdded = false;
+            for (var j = 0; j < uniqueTermCount; j++)
+            {
+                if (uniqueTerms[j] == normalized)
+                {
+                    alreadyAdded = true;
+                    break;
+                }
+            }
+
+            if (!alreadyAdded)
+                uniqueTerms[uniqueTermCount++] = normalized;
+        }
+
+        if (uniqueTermCount == 0)
+            return Array.Empty<SearchResult>();
+
+        var matches = new SearchMatch[4];
+        var matchCount = 0;
+
+        for (var termIndex = 0; termIndex < uniqueTermCount; termIndex++)
+        {
+            var postings = GetPostings(uniqueTerms[termIndex], uniqueTermCount);
+            for (var postingIndex = 0; postingIndex < postings.Length; postingIndex++)
+            {
+                var posting = postings[postingIndex];
+                var matchIndex = -1;
+
+                for (var i = 0; i < matchCount; i++)
+                {
+                    if (matches[i].DocId == posting.DocId)
+                    {
+                        matchIndex = i;
+                        break;
+                    }
+                }
+
+                if (matchIndex >= 0)
+                {
+                    var existing = matches[matchIndex];
+                    matches[matchIndex] = new SearchMatch(
+                        existing.DocId,
+                        existing.Score + posting.TermFrequency,
+                        existing.DistinctTermCount + 1);
+                }
+                else
+                {
+                    if (matchCount == matches.Length)
+                    {
+                        var resized = new SearchMatch[matches.Length * 2];
+                        for (var i = 0; i < matchCount; i++)
+                            resized[i] = matches[i];
+                        matches = resized;
+                    }
+
+                    matches[matchCount++] = new SearchMatch(
+                        posting.DocId,
+                        posting.TermFrequency,
+                        1);
+                }
+            }
+        }
+
+        var ranked = new SearchMatch[matchCount];
+        for (var i = 0; i < matchCount; i++)
+        {
+            var match = matches[i];
+            var distinctTermBonus =
+                match.DistinctTermCount > 1
+                    ? (match.DistinctTermCount - 1) * 5
+                    : 0;
+            ranked[i] = new SearchMatch(
+                match.DocId,
+                match.Score + distinctTermBonus,
+                match.DistinctTermCount);
+        }
+
+        SortMatches(ranked);
+
+        var resultCount = ranked.Length < topK ? ranked.Length : topK;
+        var results = new SearchResult[resultCount];
+        for (var i = 0; i < resultCount; i++)
+        {
+            results[i] = new SearchResult(
+                ranked[i].DocId,
+                GetSnippet(ranked[i].DocId),
+                ranked[i].Score);
+        }
+
+        return results;
+    }
+
     public SearchResult[] Search(IEnumerable<string> terms)
     {
         ArgumentNullException.ThrowIfNull(terms);
@@ -249,10 +360,19 @@ public sealed class ThreadSafeInvertedIndex
         {
             DocId = docId;
             Score = score;
+            DistinctTermCount = 1;
+        }
+
+        public SearchMatch(string docId, int score, int distinctTermCount)
+        {
+            DocId = docId;
+            Score = score;
+            DistinctTermCount = distinctTermCount;
         }
 
         public string DocId { get; }
         public int Score { get; }
+        public int DistinctTermCount { get; }
     }
 
     private Posting[] GetPostings(string term, int _)
