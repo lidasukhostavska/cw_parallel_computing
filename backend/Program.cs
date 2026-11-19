@@ -12,6 +12,15 @@ builder.Services.AddHttpClient("ollama", client =>
 });
 builder.Services.AddSingleton<ThreadSafeInvertedIndex>();
 builder.Services.AddSingleton<IndexingState>();
+builder.Services.AddHttpClient("ollama-expander", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+});
+builder.Services.AddSingleton<OllamaQueryExpander>(provider =>
+{
+    var factory = provider.GetRequiredService<IHttpClientFactory>();
+    return new OllamaQueryExpander(factory.CreateClient("ollama-expander"));
+});
 
 var app = builder.Build();
 
