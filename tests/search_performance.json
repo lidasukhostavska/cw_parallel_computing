@@ -1,0 +1,38 @@
+{
+  "base_url": "http://localhost:8080",
+  "requests_per_level": 100,
+  "results": [
+    {
+      "concurrency": 1,
+      "total_requests": 100,
+      "total_time_s": 5.91089280002052,
+      "throughput_req_s": 16.91791805117035,
+      "average_latency_ms": 58.884925001184456,
+      "p95_latency_ms": 101.9357200129889
+    },
+    {
+      "concurrency": 5,
+      "total_requests": 100,
+      "total_time_s": 1.8389165000407957,
+      "throughput_req_s": 54.379848132191725,
+      "average_latency_ms": 89.42507000174373,
+      "p95_latency_ms": 166.18093501310796
+    },
+    {
+      "concurrency": 10,
+      "total_requests": 100,
+      "total_time_s": 1.6652857999433763,
+      "throughput_req_s": 60.04975242291758,
+      "average_latency_ms": 157.56831100210547,
+      "p95_latency_ms": 339.3383799993899
+    },
+    {
+      "concurrency": 20,
+      "total_requests": 100,
+      "total_time_s": 1.62139450001996,
+      "throughput_req_s": 61.67530480630652,
+      "average_latency_ms": 295.9333800006425,
+      "p95_latency_ms": 630.4176599980564
+    }
+  ]
+}
