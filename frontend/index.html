@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Parallel Search Engine</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div>
+      <p class="eyebrow">Information Retrieval Lab</p>
+      <h1>Parallel Search Engine with LLM Query Expansion</h1>
+    </div>
+    <div id="stats-badge" class="stats-badge pending">
+      Server: checking
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="search-panel" aria-label="Search">
+      <form id="search-form">
+        <label for="search-input">Search documents</label>
+        <div class="search-controls">
+          <input
+            id="search-input"
+            name="query"
+            type="text"
+            placeholder="Enter a search query"
+            autocomplete="off"
+          >
+          <select id="search-mode" name="mode" aria-label="Search mode">
+            <option value="ws">WebSocket Pipeline</option>
+            <option value="keyword">Keyword Only</option>
+          </select>
+          <button type="submit">Search</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="pipeline-steps" class="pipeline" aria-label="Search pipeline">
+      <article id="step-query_expansion" class="pipeline-step pending">
+        <div class="step-number">1</div>
+        <div class="step-content">
+          <h2>Query Expansion</h2>
+          <p id="query-expansion-status" class="step-status">Waiting for a query</p>
+          <p id="original-query" class="original-query"></p>
+          <div id="expanded-terms" class="expanded-terms" aria-label="Expanded terms"></div>
+        </div>
+      </article>
+
+      <article id="step-keyword_search" class="pipeline-step pending">
+        <div class="step-number">2</div>
+        <div class="step-content">
+          <h2>Keyword Search</h2>
+          <p id="keyword-search-status" class="step-status">Waiting to search</p>
+          <p id="search-time" class="search-time"></p>
+        </div>
+      </article>
+
+      <article id="step-done" class="pipeline-step pending">
+        <div class="step-number">3</div>
+        <div class="step-content">
+          <h2>Done</h2>
+          <p id="done-status" class="step-status">Waiting for completion</p>
+        </div>
+      </article>
+    </section>
+
+    <section class="results-section" aria-labelledby="results-heading">
+      <h2 id="results-heading">Results</h2>
+      <div id="results-list" class="results-list">
+        <p class="empty-state">Run a search to see ranked documents.</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
