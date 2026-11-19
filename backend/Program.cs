@@ -135,7 +135,8 @@ app.MapGet("/api/stats", (IndexingState indexingState) =>
 
 app.MapPost("/api/search", async (
     HttpContext httpContext,
-    ThreadSafeInvertedIndex index) =>
+    ThreadSafeInvertedIndex index,
+    OllamaQueryExpander expander) =>
 {
     SearchRequest? request;
 
@@ -159,7 +160,18 @@ app.MapPost("/api/search", async (
 
     var stopwatch = Stopwatch.StartNew();
     var tokens = SplitSearchTokens(request.Query);
-    var matches = index.SearchAny(tokens, 20);
+
+    var mode = request.Mode?.Trim().ToLowerInvariant();
+    var useExpandedSearch =
+        mode == "expanded" ||
+        mode == "semantic" ||
+        mode == "llm";
+
+    var searchTerms = useExpandedSearch
+        ? await expander.ExpandAsync(request.Query)
+        : tokens;
+
+    var matches = index.SearchAny(searchTerms, 20);
     stopwatch.Stop();
 
     var maxScore = 0;
