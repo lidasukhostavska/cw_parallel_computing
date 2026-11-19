@@ -65,10 +65,12 @@ public sealed class ThreadSafeInvertedIndex
     private DocumentInfo[] _documents;
     private int _documentCount;
 
-    public ThreadSafeInvertedIndex(int bucketCount = 16384)
+    public ThreadSafeInvertedIndex(int bucketCount = 131072)
     {
         if (bucketCount <= 0)
             throw new ArgumentOutOfRangeException(nameof(bucketCount));
+        if ((bucketCount & (bucketCount - 1)) != 0)
+            throw new ArgumentException("Bucket count must be a power of two.", nameof(bucketCount));
 
         _buckets = new Bucket[bucketCount];
         for (var i = 0; i < _buckets.Length; i++)
@@ -114,6 +116,10 @@ public sealed class ThreadSafeInvertedIndex
         if (!TryAddDocument(docId, snippet))
             return;
 
+        var localTerms = new string[64];
+        var localCounts = new int[64];
+        var localUniqueCount = 0;
+
         var start = 0;
         while (start < text.Length)
         {
@@ -126,12 +132,36 @@ public sealed class ThreadSafeInvertedIndex
 
             if (end > start)
             {
-                var token = Normalize(text.Substring(start, end - start));
-                if (token.Length != 0)
-                    AddPosting(token, docId);
+                var token = text.AsSpan(start, end - start);
+                var slot = FindLocalTerm(localTerms, token);
+
+                if (slot >= 0)
+                {
+                    localCounts[slot]++;
+                }
+                else
+                {
+                    if ((localUniqueCount + 1) * 4 >= localTerms.Length * 3)
+                        GrowLocalTable(ref localTerms, ref localCounts);
+
+                    var normalized = CreateNormalizedTerm(token);
+                    if (normalized.Length != 0)
+                    {
+                        slot = FindEmptyLocalSlot(localTerms, normalized);
+                        localTerms[slot] = normalized;
+                        localCounts[slot] = 1;
+                        localUniqueCount++;
+                    }
+                }
             }
 
             start = end;
+        }
+
+        for (var i = 0; i < localTerms.Length; i++)
+        {
+            if (localTerms[i] != null)
+                AddPostingWithFrequency(localTerms[i], docId, localCounts[i]);
         }
     }
 
@@ -459,12 +489,6 @@ public sealed class ThreadSafeInvertedIndex
     {
         lock (_documentsLock)
         {
-            for (var i = 0; i < _documentCount; i++)
-            {
-                if (_documents[i].DocId == docId)
-                    return false;
-            }
-
             if (_documentCount == _documents.Length)
             {
                 var resized = new DocumentInfo[_documents.Length * 2];
@@ -477,7 +501,113 @@ public sealed class ThreadSafeInvertedIndex
         }
     }
 
+    private static int FindLocalTerm(string[] localTerms, ReadOnlySpan<char> token)
+    {
+        var capacity = localTerms.Length;
+        var slot = HashLocalSpan(token) & (capacity - 1);
+
+        while (localTerms[slot] != null)
+        {
+            if (LocalTermEquals(localTerms[slot], token))
+                return slot;
+            slot = (slot + 1) & (capacity - 1);
+        }
+
+        return -1;
+    }
+
+    private static int FindEmptyLocalSlot(string[] localTerms, string term)
+    {
+        var capacity = localTerms.Length;
+        var slot = HashLocalString(term) & (capacity - 1);
+
+        while (localTerms[slot] != null)
+            slot = (slot + 1) & (capacity - 1);
+
+        return slot;
+    }
+
+    private static void GrowLocalTable(
+        ref string[] localTerms,
+        ref int[] localCounts)
+    {
+        var resizedTerms = new string[localTerms.Length * 2];
+        var resizedCounts = new int[resizedTerms.Length];
+
+        for (var i = 0; i < localTerms.Length; i++)
+        {
+            if (localTerms[i] == null)
+                continue;
+
+            var capacity = resizedTerms.Length;
+            var slot = HashLocalString(localTerms[i]) & (capacity - 1);
+            while (resizedTerms[slot] != null)
+                slot = (slot + 1) & (capacity - 1);
+
+            resizedTerms[slot] = localTerms[i];
+            resizedCounts[slot] = localCounts[i];
+        }
+
+        localTerms = resizedTerms;
+        localCounts = resizedCounts;
+    }
+
+    private static string CreateNormalizedTerm(ReadOnlySpan<char> token)
+    {
+        var characters = new char[token.Length];
+        var length = 0;
+
+        for (var i = 0; i < token.Length; i++)
+        {
+            if (char.IsLetterOrDigit(token[i]))
+                characters[length++] = char.ToLowerInvariant(token[i]);
+        }
+
+        return length == 0 ? string.Empty : new string(characters, 0, length);
+    }
+
+    private static bool LocalTermEquals(string term, ReadOnlySpan<char> token)
+    {
+        if (term.Length != token.Length)
+            return false;
+
+        for (var i = 0; i < term.Length; i++)
+        {
+            if (term[i] != char.ToLowerInvariant(token[i]))
+                return false;
+        }
+
+        return true;
+    }
+
+    private static int HashLocalSpan(ReadOnlySpan<char> value)
+    {
+        unchecked
+        {
+            var hash = 17;
+            for (var i = 0; i < value.Length; i++)
+                hash = (hash * 31) + char.ToLowerInvariant(value[i]);
+            return hash;
+        }
+    }
+
+    private static int HashLocalString(string value)
+    {
+        unchecked
+        {
+            var hash = 17;
+            for (var i = 0; i < value.Length; i++)
+                hash = (hash * 31) + char.ToLowerInvariant(value[i]);
+            return hash;
+        }
+    }
+
     private void AddPosting(string term, string docId)
+    {
+        AddPostingWithFrequency(term, docId, 1);
+    }
+
+    private void AddPostingWithFrequency(string term, string docId, int frequency)
     {
         var bucket = GetBucket(term);
         lock (bucket.Lock)
@@ -494,7 +624,9 @@ public sealed class ThreadSafeInvertedIndex
             {
                 if (entry.Postings[i].DocId == docId)
                 {
-                    entry.Postings[i] = new Posting(docId, entry.Postings[i].TermFrequency + 1);
+                    entry.Postings[i] = new Posting(
+                        docId,
+                        entry.Postings[i].TermFrequency + frequency);
                     return;
                 }
             }
@@ -506,7 +638,7 @@ public sealed class ThreadSafeInvertedIndex
                 entry.Postings = resized;
             }
 
-            entry.Postings[entry.PostingCount++] = new Posting(docId, 1);
+            entry.Postings[entry.PostingCount++] = new Posting(docId, frequency);
         }
     }
 
@@ -517,7 +649,7 @@ public sealed class ThreadSafeInvertedIndex
             var hash = 17;
             for (var i = 0; i < term.Length; i++)
                 hash = (hash * 31) + char.ToLowerInvariant(term[i]);
-            var index = (hash & 0x7FFFFFFF) % _buckets.Length;
+            var index = hash & (_buckets.Length - 1);
             return _buckets[index];
         }
     }
