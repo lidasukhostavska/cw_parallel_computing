@@ -1,8 +1,8 @@
 services:
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
       OLLAMA_URL: http://ollama:11434
       OLLAMA_MODEL: llama3.2:1b
@@ -10,6 +10,7 @@ services:
       - "8080:8080"
     volumes:
       - ./data:/app/data:ro
+      - ./frontend:/app/wwwroot:ro
     depends_on:
       ollama-init:
         condition: service_completed_successfully

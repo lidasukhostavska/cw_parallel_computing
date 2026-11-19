@@ -1,9 +1,10 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
-COPY Backend.csproj .
+COPY backend/Backend.csproj ./Backend.csproj
 RUN dotnet restore Backend.csproj
-COPY . .
+COPY backend/. .
 RUN dotnet publish Backend.csproj -c Release -o /app/publish
+COPY frontend/. /app/publish/wwwroot/
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net.WebSockets;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.FileProviders;
 using Backend.Core;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -26,6 +27,43 @@ builder.Services.AddSingleton<OllamaQueryExpander>(provider =>
 var app = builder.Build();
 
 app.UseWebSockets();
+
+var frontendDirectory = "/app/wwwroot";
+if (!Directory.Exists(frontendDirectory))
+{
+    var candidates = new[]
+    {
+        Path.Combine(Directory.GetCurrentDirectory(), "frontend"),
+        Path.Combine(builder.Environment.ContentRootPath, "..", "frontend"),
+        Path.Combine(builder.Environment.ContentRootPath, "frontend")
+    };
+
+    frontendDirectory = string.Empty;
+    for (var i = 0; i < candidates.Length; i++)
+    {
+        var candidate = Path.GetFullPath(candidates[i]);
+        if (Directory.Exists(candidate))
+        {
+            frontendDirectory = candidate;
+            break;
+        }
+    }
+}
+
+if (!string.IsNullOrEmpty(frontendDirectory) && Directory.Exists(frontendDirectory))
+{
+    var frontendProvider = new PhysicalFileProvider(frontendDirectory);
+    app.UseDefaultFiles(new DefaultFilesOptions
+    {
+        FileProvider = frontendProvider,
+        RequestPath = ""
+    });
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = frontendProvider,
+        RequestPath = ""
+    });
+}
 
 app.MapGet("/api/health", async (IHttpClientFactory httpClientFactory) =>
 {
