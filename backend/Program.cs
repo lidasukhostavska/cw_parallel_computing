@@ -14,6 +14,7 @@ builder.Services.AddHttpClient("ollama", client =>
 });
 builder.Services.AddSingleton<ThreadSafeInvertedIndex>();
 builder.Services.AddSingleton<IndexingState>();
+builder.Services.AddSingleton<IndexService>();
 builder.Services.AddHttpClient("ollama-expander", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(15);
@@ -91,8 +92,7 @@ app.MapGet("/api/health", async (IHttpClientFactory httpClientFactory) =>
 
 app.MapPost("/api/index", async (
     HttpContext httpContext,
-    ThreadSafeInvertedIndex index,
-    IndexingState indexingState) =>
+    IndexService indexService) =>
 {
     var threads = 4;
 
@@ -109,56 +109,15 @@ app.MapPost("/api/index", async (
         }
     }
 
-    index.Clear();
-
-    var dataDirectory = Environment.GetEnvironmentVariable("DATA_DIR");
-    if (string.IsNullOrWhiteSpace(dataDirectory))
-        dataDirectory = "/app/data";
-
-    var stopwatch = Stopwatch.StartNew();
-
-    string[] files;
-    if (Directory.Exists(dataDirectory))
-        files = Directory.GetFiles(dataDirectory, "*.txt", SearchOption.AllDirectories);
-    else
-        files = Array.Empty<string>();
-
-    using (var pool = new CustomThreadPool(threads))
-    {
-        for (var i = 0; i < files.Length; i++)
-        {
-            var filePath = files[i];
-            pool.Enqueue(() =>
-            {
-                try
-                {
-                    var content = File.ReadAllText(filePath);
-                    var relativePath = Path.GetRelativePath(dataDirectory, filePath)
-                        .Replace('\\', '/');
-                    index.IndexDocument(relativePath, content);
-                }
-                catch (IOException)
-                {
-                }
-                catch (UnauthorizedAccessException)
-                {
-                }
-            });
-        }
-
-        pool.WaitAll();
-    }
-
-    stopwatch.Stop();
-    var elapsedMilliseconds = stopwatch.ElapsedMilliseconds;
-    var documentsIndexed = index.DocumentCount;
-    indexingState.Update(documentsIndexed, elapsedMilliseconds, threads);
+    var result = await indexService.RunAsync(threads);
+    if (result == null)
+        return Results.Json(new { status = "busy" }, statusCode: StatusCodes.Status409Conflict);
 
     return Results.Json(new
     {
         status = "ok",
-        documents_indexed = documentsIndexed,
-        time_ms = elapsedMilliseconds
+        documents_indexed = result.DocumentsIndexed,
+        time_ms = result.ElapsedMilliseconds
     });
 });
 
@@ -373,6 +332,42 @@ static async Task SendJsonAsync(
         true,
         cancellationToken);
 }
+
+app.Lifetime.ApplicationStarted.Register(() =>
+{
+    var index = app.Services.GetRequiredService<ThreadSafeInvertedIndex>();
+    if (index.DocumentCount != 0)
+        return;
+
+    var dataDirectory = Environment.GetEnvironmentVariable("DATA_DIR");
+    if (string.IsNullOrWhiteSpace(dataDirectory))
+        dataDirectory = "/app/data";
+
+    if (!Directory.Exists(dataDirectory))
+        return;
+
+    var txtFiles = Directory.GetFiles(
+        dataDirectory,
+        "*.txt",
+        SearchOption.AllDirectories);
+    if (txtFiles.Length == 0)
+        return;
+
+    var threads = 4;
+    var configuredThreads = Environment.GetEnvironmentVariable("DEFAULT_INDEX_THREADS");
+    if (!string.IsNullOrWhiteSpace(configuredThreads) &&
+        int.TryParse(configuredThreads, out var parsedThreads) &&
+        parsedThreads > 0)
+    {
+        threads = parsedThreads;
+    }
+
+    var indexService = app.Services.GetRequiredService<IndexService>();
+    _ = Task.Run(async () =>
+    {
+        await indexService.RunAsync(threads);
+    });
+});
 
 app.Run();
 
