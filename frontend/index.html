@@ -12,8 +12,19 @@
       <p class="eyebrow">Information Retrieval Lab</p>
       <h1>Parallel Search Engine with LLM Query Expansion</h1>
     </div>
-    <div id="stats-badge" class="stats-badge pending">
-      Server: checking
+    <div class="header-controls">
+      <div id="stats-badge" class="stats-badge pending">
+        Server: checking
+      </div>
+      <div id="index-controls">
+        <select id="threads-select" aria-label="Indexing thread count">
+          <option value="1">1 thread</option>
+          <option value="2">2 threads</option>
+          <option value="4" selected>4 threads</option>
+          <option value="8">8 threads</option>
+        </select>
+        <button id="reindex-btn" type="button">Re-index</button>
+      </div>
     </div>
   </header>
 

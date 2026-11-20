@@ -196,6 +196,48 @@ function runWebSocketSearch(query) {
 document.addEventListener("DOMContentLoaded", () => {
   loadStats();
 
+  const reindexButton = document.getElementById("reindex-btn");
+  const threadsSelect = document.getElementById("threads-select");
+
+  reindexButton.addEventListener("click", async () => {
+    const threads = Number(threadsSelect.value);
+    const statsBadge = document.getElementById("stats-badge");
+
+    reindexButton.disabled = true;
+    threadsSelect.disabled = true;
+    reindexButton.textContent = "Indexing...";
+    statsBadge.textContent =
+      `Indexing with ${threads} thread(s)...`;
+    statsBadge.className = "stats-badge";
+
+    try {
+      const response = await fetch("/api/index", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ threads }),
+      });
+
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        const detail =
+          data && data.status ? ` (${data.status})` : "";
+        throw new Error(`Re-index request failed${detail}`);
+      }
+
+      statsBadge.textContent =
+        `Indexed: ${data.documents_indexed} docs in ${data.time_ms} ms (${threads} threads)`;
+      statsBadge.className = "stats-badge completed";
+    } catch (error) {
+      statsBadge.textContent =
+        `Re-index failed: ${error.message}`;
+      statsBadge.className = "stats-badge";
+    } finally {
+      reindexButton.disabled = false;
+      threadsSelect.disabled = false;
+      reindexButton.textContent = "Re-index";
+    }
+  });
+
   document
     .getElementById("search-form")
     .addEventListener("submit", (event) => {
